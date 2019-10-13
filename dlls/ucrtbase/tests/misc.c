@@ -136,6 +136,7 @@ static int (CDECL *p_fesetround)(int);
 static void (CDECL *p___setusermatherr)(MSVCRT_matherr_func);
 static int* (CDECL *p_errno)(void);
 static char* (CDECL *p_asctime)(const struct tm *);
+static size_t (__cdecl *p_strftime)(char *, size_t, const char *, const struct tm *);
 static void (CDECL *p_exit)(int);
 static int (CDECL *p__crt_atexit)(void (CDECL*)(void));
 static int (__cdecl *p_crt_at_quick_exit)(void (__cdecl *func)(void));
@@ -499,6 +500,7 @@ static BOOL init(void)
     p___setusermatherr = (void*)GetProcAddress(module, "__setusermatherr");
     p_errno = (void*)GetProcAddress(module, "_errno");
     p_asctime = (void*)GetProcAddress(module, "asctime");
+    p_strftime = (void*)GetProcAddress(module, "strftime");
     p__crt_atexit = (void*)GetProcAddress(module, "_crt_atexit");
     p_exit = (void*)GetProcAddress(module, "exit");
     p_crt_at_quick_exit = (void*)GetProcAddress(module, "_crt_at_quick_exit");
@@ -887,6 +889,57 @@ static void test_asctime(void)
     ok(!strcmp(ret, "Thu Jan  1 00:00:00 1970\n"), "asctime returned %s\n", ret);
 }
 
+static void test_strftime(void)
+{
+    const struct tm epoch = { 0, 0, 0, 1, 0, 70, 4, 0, 0 };
+    char bufA[256];
+    size_t retA;
+
+    retA = p_strftime(bufA, sizeof(bufA), "%C", &epoch);
+    ok(retA == 2, "expected 2, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "19"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%D", &epoch);
+    ok(retA == 8, "expected 8, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "01/01/70"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%#D", &epoch);
+    ok(retA == 6, "expected 6, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "1/1/70"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%e", &epoch);
+    ok(retA == 2, "expected 2, got %d\n", (int)retA);
+    ok(!strcmp(bufA, " 1"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%#e", &epoch);
+    ok(retA == 1, "expected 1, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "1"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%F", &epoch);
+    ok(retA == 10, "expected 10, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "1970-01-01"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%#F", &epoch);
+    ok(retA == 8, "expected 8, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "1970-1-1"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%R", &epoch);
+    ok(retA == 5, "expected 5, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "00:00"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%#R", &epoch);
+    ok(retA == 3, "expected 3, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "0:0"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%T", &epoch);
+    ok(retA == 8, "expected 8, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "00:00:00"), "got %s\n", bufA);
+
+    retA = p_strftime(bufA, sizeof(bufA), "%#T", &epoch);
+    ok(retA == 5, "expected 5, got %d\n", (int)retA);
+    ok(!strcmp(bufA, "0:0:0"), "got %s\n", bufA);
+}
+
 static LONG* get_failures_counter(HANDLE *map)
 {
     *map = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
@@ -1132,6 +1185,7 @@ START_TEST(misc)
     test_isblank();
     test_math_errors();
     test_asctime();
+    test_strftime();
     test_exit(arg_v[0]);
     test_quick_exit(arg_v[0]);
     test__stat32();

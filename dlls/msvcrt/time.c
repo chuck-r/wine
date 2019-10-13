@@ -1141,6 +1141,7 @@ static MSVCRT_size_t strftime_helper(char *str, MSVCRT_size_t max, const char *f
             if(!strftime_str(str, &ret, max, time_data->str.names.wday[mstm->tm_wday]))
                 return 0;
             break;
+        case 'h':
         case 'b':
             if(mstm->tm_mon<0 || mstm->tm_mon>11)
                 goto einval_error;
@@ -1153,10 +1154,129 @@ static MSVCRT_size_t strftime_helper(char *str, MSVCRT_size_t max, const char *f
             if(!strftime_str(str, &ret, max, time_data->str.names.mon[mstm->tm_mon]))
                 return 0;
             break;
+#if _MSVCR_VER>=140
+        case 'C':
+            tmp = (1900+mstm->tm_year)/100;
+            if(!strftime_int(str, &ret, max, tmp, alternate ? 0 : 2, 0, 99))
+                return 0;
+            break;
+#endif
         case 'd':
             if(!strftime_int(str, &ret, max, mstm->tm_mday, alternate ? 0 : 2, 0, 31))
                 return 0;
             break;
+#if _MSVCR_VER>=140
+        case 'D':
+            if(!strftime_int(str, &ret, max, mstm->tm_mon+1, alternate ? 0 : 2, 1, 12))
+                return 0;
+            if(ret < max)
+                str[ret++] = '/';
+            if(!strftime_int(str, &ret, max, mstm->tm_mday, alternate ? 0 : 2, 0, 31))
+                return 0;
+            if(ret < max)
+                str[ret++] = '/';
+            if(!strftime_int(str, &ret, max, mstm->tm_year%100, alternate ? 0 : 2, 0, 99))
+                return 0;
+            break;
+        case 'e':
+            if(!strftime_int(str, &ret, max, mstm->tm_mday, alternate ? 0 : 2, 0, 31))
+                return 0;
+            if(!alternate && str[ret-2] == '0')
+                str[ret-2] = ' ';
+            break;
+        case 'F':
+            tmp = 1900+mstm->tm_year;
+            if(!strftime_int(str, &ret, max, tmp, alternate ? 0 : 4, 0, 9999))
+                return 0;
+            if(ret < max)
+                str[ret++] = '-';
+            if(!strftime_int(str, &ret, max, mstm->tm_mon+1, alternate ? 0 : 2, 1, 12))
+                return 0;
+            if(ret < max)
+                str[ret++] = '-';
+            if(!strftime_int(str, &ret, max, mstm->tm_mday, alternate ? 0 : 2, 0, 31))
+                return 0;
+            break;
+        case 'G':
+            {
+#ifdef _WIN64
+                MSVCRT___time64_t firstmontime = 0;
+                MSVCRT___time64_t temp_time = 0;
+#else
+                MSVCRT___time32_t firstmontime = 0;
+                MSVCRT___time32_t temp_time = 0;
+#endif
+                struct MSVCRT_tm* tmp_mstm = 0;
+                struct MSVCRT_tm* oldstate = 0;
+                struct MSVCRT_tm* firstmontm = 0;
+                int iso8601yr = -1;
+                int iso8601wk = -1;
+                char* tmp_str = 0;
+
+                if(!(tmp_mstm = MSVCRT_malloc(sizeof(struct MSVCRT_tm))))
+                  return 0;
+                if(msvcrt_get_thread_data()->time_buffer &&
+                       !(oldstate = MSVCRT_malloc(sizeof(struct MSVCRT_tm)))) {
+                  MSVCRT_free(tmp_mstm);
+                  return 0;
+                }
+
+                if(oldstate)
+                    memcpy(oldstate, msvcrt_get_thread_data()->time_buffer,
+                               sizeof(struct MSVCRT_tm));
+
+                memcpy(tmp_mstm, mstm, sizeof(struct MSVCRT_tm));
+
+                temp_time = MSVCRT_mktime(tmp_mstm);
+                MSVCRT_free(tmp_mstm);
+                tmp_mstm = MSVCRT_gmtime(&temp_time);
+
+                iso8601yr = tmp_mstm->tm_year + 1900;
+                iso8601wk = (tmp_mstm->tm_yday+1-(tmp_mstm->tm_wday==0?7:tmp_mstm->tm_wday)+10)/7;
+                if(iso8601wk == 53) {
+                   if(!(firstmontm = MSVCRT_malloc(sizeof(struct MSVCRT_tm)))) {
+                       MSVCRT_free(oldstate);
+                       return 0;
+                   }
+                   memset(firstmontm, '\0', sizeof(struct MSVCRT_tm));
+                   firstmontm->tm_mon = 0;
+                   firstmontm->tm_mday = 4;
+                   firstmontm->tm_year = tmp_mstm->tm_year+1;
+                   firstmontime = MSVCRT_mktime(firstmontm);
+                   MSVCRT_free(firstmontm);
+                   firstmontm = MSVCRT_gmtime(&firstmontime);
+                   firstmontime = firstmontime-((firstmontm->tm_wday-1==-1?6:firstmontm->tm_wday-1)*86400);
+                   if(firstmontime <= temp_time)
+                      iso8601yr += 1;
+                }
+                if(iso8601wk == 0)
+                  iso8601yr -= 1;
+
+                if(!(tmp_str = MSVCRT_malloc(6))) {
+                    MSVCRT_free(oldstate);
+                    return 0;
+                }
+                memset(tmp_str, '\0', 6);
+
+                MSVCRT__snprintf(tmp_str, 6, "%d", iso8601yr);
+                if(!strftime_str(str, &ret, max, tmp_str)) {
+                    if(oldstate) {
+                        memcpy(msvcrt_get_thread_data()->time_buffer, oldstate,
+                                   sizeof(struct MSVCRT_tm));
+                        MSVCRT_free(oldstate);
+                    }
+                    MSVCRT_free(tmp_str);
+                    return 0;
+                }
+                if(oldstate) {
+                    memcpy(msvcrt_get_thread_data()->time_buffer, oldstate,
+                               sizeof(struct MSVCRT_tm));
+                    MSVCRT_free(oldstate);
+                }
+                MSVCRT_free(tmp_str);
+            }
+            break;
+#endif
         case 'H':
             if(!strftime_int(str, &ret, max, mstm->tm_hour, alternate ? 0 : 2, 0, 23))
                 return 0;
@@ -1189,20 +1309,165 @@ static MSVCRT_size_t strftime_helper(char *str, MSVCRT_size_t max, const char *f
                         time_data->str.names.am : time_data->str.names.pm))
                 return 0;
             break;
+#if _MSVCR_VER>=140
+        case 'R':
+            if(!strftime_int(str, &ret, max, mstm->tm_hour, alternate ? 0 : 2, 0, 23))
+                return 0;
+            if(ret < max)
+                str[ret++] = ':';
+            if(!strftime_int(str, &ret, max, mstm->tm_min, alternate ? 0 : 2, 0, 59))
+                return 0;
+            break;
+#endif
         case 'S':
             if(!strftime_int(str, &ret, max, mstm->tm_sec, alternate ? 0 : 2, 0, 59))
                 return 0;
             break;
+#if _MSVCR_VER>=140
         case 'T':
             if(!strftime_int(str, &ret, max, mstm->tm_hour, alternate ? 0 : 2, 0, 23))
                 return 0;
-            str[ret++] = ':';
+            if(ret < max)
+                str[ret++] = ':';
             if(!strftime_int(str, &ret, max, mstm->tm_min, alternate ? 0 : 2, 0, 59))
                 return 0;
-            str[ret++] = ':';
+            if(ret < max)
+                str[ret++] = ':';
             if(!strftime_int(str, &ret, max, mstm->tm_sec, alternate ? 0 : 2, 0, 59))
                 return 0;
             break;
+        case 'u':
+            {
+#ifdef _WIN64
+                MSVCRT___time64_t tmp_time = 0;
+#else
+                MSVCRT___time32_t tmp_time = 0;
+#endif
+                struct MSVCRT_tm* tmp_mstm = 0;
+                struct MSVCRT_tm* oldstate = 0;
+
+                if(!(tmp_mstm = MSVCRT_malloc(sizeof(struct MSVCRT_tm))))
+                    return 0;
+                if( msvcrt_get_thread_data()->time_buffer &&
+                       !(oldstate = MSVCRT_malloc(sizeof(struct MSVCRT_tm)))) {
+                    MSVCRT_free(tmp_mstm);
+                    return 0;
+                }
+
+                if( oldstate )
+                    memcpy(oldstate, msvcrt_get_thread_data()->time_buffer,
+                               sizeof(struct MSVCRT_tm));
+                memcpy(tmp_mstm, mstm, sizeof(struct MSVCRT_tm));
+
+                tmp_time = MSVCRT_mktime(tmp_mstm);
+                MSVCRT_free(tmp_mstm);
+                tmp_mstm = MSVCRT_gmtime(&tmp_time);
+
+                if(!strftime_int(str, &ret, max, (tmp_mstm->tm_wday-1==-1?6:tmp_mstm->tm_wday-1)+1,
+                                     0, 1, 7)) {
+                    if( oldstate ) {
+                        memcpy(msvcrt_get_thread_data()->time_buffer, oldstate,
+                                   sizeof(struct MSVCRT_tm));
+                        MSVCRT_free(oldstate);
+                    }
+                    return 0;
+                }
+
+                if( oldstate ) {
+                    memcpy(msvcrt_get_thread_data()->time_buffer, oldstate,
+                               sizeof(struct MSVCRT_tm));
+                    MSVCRT_free(oldstate);
+                }
+            }
+            break;
+        case 'V':
+            {
+#ifdef _WIN64
+                MSVCRT___time64_t tmp_time = 0;
+                MSVCRT___time64_t tmp_time_mon = 0;
+#else
+                MSVCRT___time32_t tmp_time = 0;
+                MSVCRT___time32_t tmp_time_mon = 0;
+#endif
+                int iso8601wk;
+
+                struct MSVCRT_tm* tmp_mstm = 0;
+                struct MSVCRT_tm* oldstate = 0;
+
+                if(!(tmp_mstm = MSVCRT_malloc(sizeof(struct MSVCRT_tm))))
+                    return 0;
+                if(msvcrt_get_thread_data()->time_buffer &&
+                       !(oldstate = MSVCRT_malloc(sizeof(struct MSVCRT_tm)))) {
+                    MSVCRT_free(tmp_mstm);
+                    return 0;
+                }
+
+                if( oldstate )
+                    memcpy(oldstate, msvcrt_get_thread_data()->time_buffer,
+                               sizeof(struct MSVCRT_tm));
+
+                memcpy(tmp_mstm, mstm, sizeof(struct MSVCRT_tm));
+
+                tmp_time = MSVCRT_mktime(tmp_mstm);
+                MSVCRT_free(tmp_mstm);
+                tmp_mstm = MSVCRT_gmtime(&tmp_time);
+
+                iso8601wk = ((tmp_mstm->tm_yday+1-(tmp_mstm->tm_wday==0?7:tmp_mstm->tm_wday)+10)/7);
+                if (iso8601wk == 53 ) {
+                    if(!(tmp_mstm = MSVCRT_malloc(sizeof(struct MSVCRT_tm)))) {
+                        if(oldstate)
+                            MSVCRT_free(oldstate);
+                        return 0;
+                    }
+
+                    memset(tmp_mstm, '\0', sizeof(struct MSVCRT_tm));
+
+                    tmp_mstm->tm_mday = 4;
+                    tmp_mstm->tm_mon = 0;
+                    tmp_mstm->tm_year = (mstm->tm_year+1);
+                    tmp_time_mon = MSVCRT_mktime(tmp_mstm);
+                    MSVCRT_free(tmp_mstm);
+                    tmp_time_mon = tmp_time_mon-((tmp_mstm->tm_wday-1==-1?6:tmp_mstm->tm_wday-1)*86400);
+                    if(tmp_time_mon <= tmp_time)
+                        iso8601wk = 1;
+                    else
+                        iso8601wk = 53;
+                }
+                if(iso8601wk == 0) {
+                    if(!(tmp_mstm = MSVCRT_malloc(sizeof(struct MSVCRT_tm)))) {
+                        if(oldstate)
+                            MSVCRT_free(oldstate);
+                        return 0;
+                    }
+
+                    memset(tmp_mstm, '\0', sizeof(struct MSVCRT_tm));
+
+                    tmp_mstm->tm_mday = 4;
+                    tmp_mstm->tm_mon = 0;
+                    tmp_mstm->tm_year = mstm->tm_year;
+                    tmp_time_mon = MSVCRT_mktime(tmp_mstm);
+                    tmp_time_mon = (tmp_time_mon-((tmp_mstm->tm_wday-1==-1?6:tmp_mstm->tm_wday-1)*86400))-604800;
+                    MSVCRT_free(tmp_mstm);
+                    tmp_mstm = MSVCRT_gmtime(&tmp_time_mon);
+                    iso8601wk = (tmp_mstm->tm_yday+1-(tmp_mstm->tm_wday==0?7:tmp_mstm->tm_wday)+10)/7;
+                }
+
+                if(!strftime_int(str, &ret, max, iso8601wk, 2, 0, 53)) {
+                    if( oldstate ) {
+                        memcpy(msvcrt_get_thread_data()->time_buffer, oldstate,
+                                   sizeof(struct MSVCRT_tm));
+                        MSVCRT_free(oldstate);
+                    }
+                    return 0;
+                }
+                if( oldstate ) {
+                    memcpy(msvcrt_get_thread_data()->time_buffer, oldstate,
+                               sizeof(struct MSVCRT_tm));
+                    MSVCRT_free(oldstate);
+                }
+            }
+            break;
+#endif
         case 'w':
             if(!strftime_int(str, &ret, max, mstm->tm_wday, 0, 0, 6))
                 return 0;
