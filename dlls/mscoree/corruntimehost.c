@@ -40,7 +40,6 @@
 #include "mscoree_private.h"
 
 #include "wine/debug.h"
-#include "wine/unicode.h"
 #include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL( mscoree );
@@ -58,6 +57,8 @@ struct DomainEntry
 static HANDLE dll_fixup_heap; /* using a separate heap so we can have execute permission */
 
 static struct list dll_fixups;
+
+WCHAR **private_path = NULL;
 
 struct dll_fixup
 {
@@ -1437,6 +1438,8 @@ static void FixupVTable(HMODULE hmodule)
 
 __int32 WINAPI _CorExeMain(void)
 {
+    static const WCHAR dotconfig[] = {'.','c','o','n','f','i','g',0};
+    static const WCHAR scW[] = {';',0};
     int exit_code;
     int argc;
     char **argv;
@@ -1444,12 +1447,14 @@ __int32 WINAPI _CorExeMain(void)
     MonoImage *image;
     MonoImageOpenStatus status;
     MonoAssembly *assembly=NULL;
-    WCHAR filename[MAX_PATH];
+    WCHAR filename[MAX_PATH], config_file[MAX_PATH], *temp, **priv_path;
+    SIZE_T config_file_dir_size;
     char *filenameA;
     ICLRRuntimeInfo *info;
     RuntimeHost *host;
+    parsed_config_file parsed_config;
     HRESULT hr;
-    int i;
+    int i, number_of_private_paths = 0;
 
     get_utf8_args(&argc, &argv);
 
@@ -1469,6 +1474,33 @@ __int32 WINAPI _CorExeMain(void)
 
     FixupVTable(GetModuleHandleW(NULL));
 
+    wcscpy(config_file, filename);
+    wcscat(config_file, dotconfig);
+
+    hr = parse_config_file(config_file, &parsed_config);
+    if (SUCCEEDED(hr) && parsed_config.private_path)
+    {
+        for(i = 0; parsed_config.private_path[i] != 0; i++)
+            if (parsed_config.private_path[i] == ';') number_of_private_paths++;
+        if (parsed_config.private_path[wcslen(parsed_config.private_path) - 1] != ';') number_of_private_paths++;
+        config_file_dir_size = (wcsrchr(config_file, '\\') - config_file) + 1;
+        priv_path = HeapAlloc(GetProcessHeap(), 0, (number_of_private_paths + 1) * sizeof(WCHAR *));
+        /* wcstok ignores trailing semicolons */
+        temp = wcstok(parsed_config.private_path, scW);
+        for (i = 0; i < number_of_private_paths; i++)
+        {
+            priv_path[i] = HeapAlloc(GetProcessHeap(), 0, (config_file_dir_size + wcslen(temp) + 1) * sizeof(WCHAR));
+            memcpy(priv_path[i], config_file, config_file_dir_size * sizeof(WCHAR));
+            wcscpy(priv_path[i] + config_file_dir_size, temp);
+            temp = wcstok(NULL, scW);
+        }
+        priv_path[number_of_private_paths] = NULL;
+        if (InterlockedCompareExchangePointer((void **)&private_path, priv_path, NULL))
+            ERR("private_path was already set\n");
+    }
+
+    free_parsed_config_file(&parsed_config);
+
     hr = get_runtime_info(filename, NULL, NULL, NULL, 0, 0, FALSE, &info);
 
     if (SUCCEEDED(hr))
@@ -1476,15 +1508,7 @@ __int32 WINAPI _CorExeMain(void)
         hr = ICLRRuntimeInfo_GetRuntimeHost(info, &host);
 
         if (SUCCEEDED(hr))
-        {
-            WCHAR config_file[MAX_PATH];
-            static const WCHAR dotconfig[] = {'.','c','o','n','f','i','g',0};
-
-            strcpyW(config_file, filename);
-            strcatW(config_file, dotconfig);
-
             hr = RuntimeHost_GetDefaultDomain(host, config_file, &domain);
-        }
 
         if (SUCCEEDED(hr))
         {
@@ -1686,10 +1710,10 @@ static BOOL try_create_registration_free_com(REFIID clsid, WCHAR *classname, UIN
         ERR("Buffer is too small\n");
         goto end;
     }
-    strcpyW(classname, ptr_name);
+    lstrcpyW(classname, ptr_name);
 
     ptr_path_start = assembly_info->lpAssemblyEncodedAssemblyIdentity;
-    ptr_path_end = strchrW(ptr_path_start, ',');
+    ptr_path_end = wcschr(ptr_path_start, ',');
     memcpy(path, ptr_path_start, (char*)ptr_path_end - (char*)ptr_path_start);
 
     GetModuleFileNameW(NULL, filename, filename_size);
@@ -1702,7 +1726,7 @@ static BOOL try_create_registration_free_com(REFIID clsid, WCHAR *classname, UIN
     }
 
     PathAppendW(filename, path);
-    strcatW(filename, str_dll);
+    lstrcatW(filename, str_dll);
 
     ret = TRUE;
 
@@ -1766,10 +1790,10 @@ HRESULT create_monodata(REFIID riid, LPVOID *ppObj )
         if(res == ERROR_SUCCESS)
         {
             /* Strip file:/// */
-            if(strncmpW(codebase, wszFileSlash, strlenW(wszFileSlash)) == 0)
-                offset = strlenW(wszFileSlash);
+            if(wcsncmp(codebase, wszFileSlash, lstrlenW(wszFileSlash)) == 0)
+                offset = lstrlenW(wszFileSlash);
 
-            strcpyW(filename, codebase + offset);
+            lstrcpyW(filename, codebase + offset);
         }
         else
         {
@@ -1808,14 +1832,14 @@ HRESULT create_monodata(REFIID riid, LPVOID *ppObj )
 
                 WARN("Attempt to load from the application directory.\n");
                 GetModuleFileNameW(NULL, filename, MAX_PATH);
-                ns = strrchrW(filename, '\\');
+                ns = wcsrchr(filename, '\\');
                 *(ns+1) = '\0';
 
-                ns = strchrW(assemblyname, ',');
+                ns = wcschr(assemblyname, ',');
                 *(ns) = '\0';
-                strcatW(filename, assemblyname);
+                lstrcatW(filename, assemblyname);
                 *(ns) = '.';
-                strcatW(filename, wszDLL);
+                lstrcatW(filename, wszDLL);
             }
         }
     }

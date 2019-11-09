@@ -45,7 +45,7 @@ extern HRESULT assembly_get_runtime_version(ASSEMBLY *assembly, LPSTR *version) 
 extern HRESULT assembly_get_vtable_fixups(ASSEMBLY *assembly, VTableFixup **fixups, DWORD *count) DECLSPEC_HIDDEN;
 extern HRESULT assembly_get_native_entrypoint(ASSEMBLY *assembly, NativeEntryPointFunc *func) DECLSPEC_HIDDEN;
 
-#define WINE_MONO_VERSION "4.9.3"
+#define WINE_MONO_VERSION "4.9.4"
 
 /* Mono embedding */
 typedef struct _MonoDomain MonoDomain;
@@ -117,6 +117,7 @@ extern HRESULT MetaDataDispenser_CreateInstance(IUnknown **ppUnk) DECLSPEC_HIDDE
 typedef struct parsed_config_file
 {
     struct list supported_runtimes;
+    LPWSTR private_path;
 } parsed_config_file;
 
 typedef struct supported_runtime
@@ -124,6 +125,8 @@ typedef struct supported_runtime
     struct list entry;
     LPWSTR version;
 } supported_runtime;
+
+extern WCHAR **private_path;
 
 extern HRESULT parse_config_file(LPCWSTR filename, parsed_config_file *result) DECLSPEC_HIDDEN;
 

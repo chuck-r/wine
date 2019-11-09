@@ -126,7 +126,7 @@ static struct list files[HASH_SIZE];
 
 static const struct strarray empty_strarray;
 
-enum install_rules { INSTALL_LIB, INSTALL_DEV, NB_INSTALL_RULES };
+enum install_rules { INSTALL_LIB, INSTALL_DEV, INSTALL_DEBUG, NB_INSTALL_RULES };
 
 /* variables common to all makefiles */
 static struct strarray linguas;
@@ -2233,8 +2233,16 @@ static void add_install_rule( struct makefile *make, const char *target,
         strarray_exists( &top_install_lib, make->base_dir ) ||
         strarray_exists( &top_install_lib, base_dir_path( make, target )))
     {
-        strarray_add( &make->install_rules[INSTALL_LIB], file );
-        strarray_add( &make->install_rules[INSTALL_LIB], dest );
+        if (*dest == 'C')
+        {
+            strarray_add( &make->install_rules[INSTALL_DEBUG], file );
+            strarray_add( &make->install_rules[INSTALL_DEBUG], dest );
+        }
+        else
+        {
+            strarray_add( &make->install_rules[INSTALL_LIB], file );
+            strarray_add( &make->install_rules[INSTALL_LIB], dest );
+        }
     }
     else if (strarray_exists( &make->install_dev, target ) ||
              strarray_exists( &top_install_dev, make->base_dir ) ||
@@ -2328,6 +2336,7 @@ static void output_winegcc_command( struct makefile *make )
         output_filename( "-b" );
         output_filename( crosstarget );
         output_filename( "--lib-suffix=.cross.a" );
+        output_filename( "-gsplit-dwarf" );
     }
     else
     {
@@ -2384,6 +2393,10 @@ static void output_install_commands( struct makefile *make, const struct makefil
             output( "\tSTRIPPROG=%s-strip %s -m 644 $(INSTALL_PROGRAM_FLAGS) %s %s\n",
                     crosstarget, install_sh, obj_dir_path( make, file ), dest );
             break;
+        case 'C':  /* debug symbols for cross-compiled program */
+            output( "\t%s -m 644 $(filter-out -s,$(INSTALL_PROGRAM_FLAGS)) %s %s\n",
+                    install_sh, obj_dir_path( make, file ), dest );
+            break;
         case 'd':  /* data file */
             output( "\t%s -m 644 $(INSTALL_DATA_FLAGS) %s %s\n",
                     install_sh, obj_dir_path( make, file ), dest );
@@ -2439,6 +2452,7 @@ static void output_install_rules( struct makefile *make, enum install_rules rule
         switch (*files.str[i + 1])
         {
         case 'c':  /* cross-compiled program */
+        case 'C':  /* debug symbols for cross-compiled program */
         case 'd':  /* data file */
         case 'p':  /* program file */
         case 's':  /* script */
@@ -2450,7 +2464,10 @@ static void output_install_rules( struct makefile *make, enum install_rules rule
         }
     }
 
-    output( "install %s::", target );
+    if (rules == INSTALL_DEBUG)
+        output( "%s::", target );
+    else
+        output( "install %s::", target );
     output_filenames( targets );
     output( "\n" );
     output_install_commands( make, NULL, files );
@@ -3028,7 +3045,14 @@ static void output_source_default( struct makefile *make, struct incl_file *sour
         else
             strarray_add( &make->clean_files, strmake( "%s.o", obj ));
         output( "%s.o: %s\n", obj_dir_path( make, obj ), source->filename );
-        output( "\t$(CC) -c -o $@ %s", source->filename );
+        if (strendswith( source->name, ".cpp" ) || strendswith( source->name, ".cc" ))
+        {
+            output( "\t$(CXX) -c -o $@ %s", source->filename );
+        }
+        else
+        {
+            output( "\t$(CC) -c -o $@ %s", source->filename );
+        }
         output_filenames( defines );
         if (make->module || make->staticlib || make->sharedlib || make->testdll)
         {
@@ -3037,7 +3061,14 @@ static void output_source_default( struct makefile *make, struct incl_file *sour
         }
         output_filenames( extra_cflags );
         output_filenames( cpp_flags );
-        output_filename( "$(CFLAGS)" );
+        if (strendswith( source->name, ".cpp" ) || strendswith( source->name, ".cc" ))
+        {
+            output_filename( "$(CXXFLAGS)" );
+        }
+        else
+        {
+            output_filename( "$(CFLAGS)" );
+        }
         output( "\n" );
     }
     if (need_cross)
@@ -3197,6 +3228,8 @@ static void output_module( struct makefile *make )
         strarray_add( &make->all_targets, strmake( "%s.fake", make->module ));
         add_install_rule( make, make->module, strmake( "%s", make->module ),
                           strmake( "c$(dlldir)/%s", make->module ));
+        add_install_rule( make, make->module, strmake( ".debug/%s", make->module ),
+                          strmake( "C$(dlldir)/.debug/%s", make->module ));
         add_install_rule( make, make->module, strmake( "%s.fake", make->module ),
                               strmake( "d$(dlldir)/fakedlls/%s", make->module ));
         output( "%s %s.fake:", module_path, module_path );
@@ -3245,6 +3278,7 @@ static void output_module( struct makefile *make )
     output_filenames_obj_dir( make, make->res_files );
     output_filenames( all_libs );
     output_filename( make->is_cross ? "$(CROSSLDFLAGS)" : "$(LDFLAGS)" );
+    output_filename( make->is_cross ? "-Wl,--file-alignment,4096" : "" );
     output( "\n" );
 
     if (spec_file && make->importlib)
@@ -3691,6 +3725,11 @@ static void output_subdirs( struct makefile *make )
             output( "install install-lib:: %s\n", submake->base_dir );
             output_install_commands( make, submake, submake->install_rules[INSTALL_LIB] );
         }
+        if (submake->install_rules[INSTALL_DEBUG].count)
+        {
+            output( "install-cross-debug:: %s\n", submake->base_dir );
+            output_install_commands( make, submake, submake->install_rules[INSTALL_DEBUG] );
+        }
         if (submake->install_rules[INSTALL_DEV].count)
         {
             output( "install install-dev:: %s\n", submake->base_dir );
@@ -3842,6 +3881,7 @@ static void output_sources( struct makefile *make )
             output( "\n" );
         }
         output_install_rules( make, INSTALL_LIB, "install-lib" );
+        output_install_rules( make, INSTALL_DEBUG, "install-cross-debug" );
         output_install_rules( make, INSTALL_DEV, "install-dev" );
         output_uninstall_rules( make );
     }
@@ -4117,6 +4157,7 @@ static void load_sources( struct makefile *make )
     {
         "SOURCES",
         "C_SRCS",
+        "CPP_SRCS",
         "OBJC_SRCS",
         "RC_SRCS",
         "MC_SRCS",

@@ -2548,7 +2548,7 @@ static NTSTATUS load_so_dll( LPCWSTR load_path, const UNICODE_STRING *nt_name,
     }
 
     info.load_path = load_path;
-    info.filename  = so_name ? NULL : nt_name;
+    info.filename  = nt_name;
     info.status    = STATUS_SUCCESS;
     info.wm        = NULL;
 
@@ -2649,7 +2649,9 @@ static NTSTATUS load_builtin_dll( LPCWSTR load_path, const UNICODE_STRING *nt_na
         return load_native_dll( load_path, nt_name, module_ptr, &image_info, flags, pwm, &st );
     }
 
-    return load_so_dll( load_path, nt_name, so_name, pwm );
+    status = load_so_dll( load_path, nt_name, so_name, pwm );
+    RtlFreeHeap( GetProcessHeap(), 0, so_name );
+    return status;
 }
 
 
@@ -2812,7 +2814,8 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname,
                                void **module, pe_image_info_t *image_info, struct stat *st )
 {
     WCHAR *ext, *dllname;
-    NTSTATUS status = STATUS_SUCCESS;
+    NTSTATUS status;
+    ULONG wow64_old_value = 0;
 
     /* first append .dll if needed */
 
@@ -2829,13 +2832,14 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname,
         libname = dllname;
     }
 
+    /* Win 7/2008R2 and up seem to re-enable WoW64 FS redirection when loading libraries */
+    if (is_wow64) RtlWow64EnableFsRedirectionEx( 0, &wow64_old_value );
+
     nt_name->Buffer = NULL;
 
     if (!contains_path( libname ))
     {
         WCHAR *fullname = NULL;
-
-        if ((*pwm = find_basename_module( libname )) != NULL) goto done;
 
         status = find_actctx_dll( libname, &fullname );
         if (status == STATUS_SUCCESS)
@@ -2844,7 +2848,15 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname,
             RtlFreeHeap( GetProcessHeap(), 0, dllname );
             libname = dllname = fullname;
         }
-        else if (status != STATUS_SXS_KEY_NOT_FOUND) goto done;
+        else
+        {
+            if (status != STATUS_SXS_KEY_NOT_FOUND) goto done;
+            if ((*pwm = find_basename_module( libname )) != NULL)
+            {
+                status = STATUS_SUCCESS;
+                goto done;
+            }
+        }
     }
 
     if (RtlDetermineDosPathNameType_U( libname ) == RELATIVE_PATH)
@@ -2856,6 +2868,7 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname,
 
 done:
     RtlFreeHeap( GetProcessHeap(), 0, dllname );
+    if (wow64_old_value) RtlWow64EnableFsRedirectionEx( 1, &wow64_old_value );
     return status;
 }
 
