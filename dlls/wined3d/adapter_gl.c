@@ -227,6 +227,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_NV_vertex_program2",               NV_VERTEX_PROGRAM2            },
     {"GL_NV_vertex_program2_option",        NV_VERTEX_PROGRAM2_OPTION     },
     {"GL_NV_vertex_program3",               NV_VERTEX_PROGRAM3            },
+    {"GL_NVX_gpu_memory_info",              NVX_GPU_MEMORY_INFO           },
 };
 
 static const struct wined3d_extension_map wgl_extension_map[] =
@@ -1058,13 +1059,16 @@ static const struct wined3d_gpu_description *query_gpu_description(const struct 
 
         gpu_description = wined3d_get_gpu_description(vendor, device);
     }
-    else if(vendor == HW_VENDOR_NVIDIA)
+    else if (gl_info->supported[NVX_GPU_MEMORY_INFO])
     {
-        /* XXX: Fake having an AMD card in order to avoid games trying to load
-         * the Windows-only nvapi library. */
-        WARN("Nvidia card detected. Faking an AMD RX 480!\n");
-        vendor = HW_VENDOR_AMD;
-        device = CARD_AMD_RADEON_RX_480;
+        GLint vram_kb;
+        gl_info->gl_ops.gl.p_glGetIntegerv(GL_GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX, &vram_kb);
+
+        *vram_bytes = (UINT64)vram_kb * 1024;
+        TRACE("Got 0x%s as video memory from NVX_GPU_MEMORY_INFO extension.\n",
+                wine_dbgstr_longlong(*vram_bytes));
+
+        gpu_description = wined3d_get_gpu_description(vendor, device);
     }
 
     if ((gpu_description_override = wined3d_get_user_override_gpu_description(vendor, device)))
@@ -1364,6 +1368,7 @@ cards_nvidia_binary[] =
     {"RTX 2080",                    CARD_NVIDIA_GEFORCE_RTX2080},   /* GeForce 2000 - highend */
     {"RTX 2070",                    CARD_NVIDIA_GEFORCE_RTX2070},   /* GeForce 2000 - highend */
     {"RTX 2060",                    CARD_NVIDIA_GEFORCE_RTX2060},   /* GeForce 2000 - highend */
+    {"GTX 1660 Ti",                 CARD_NVIDIA_GEFORCE_GTX1660TI}, /* GeForce 1600 - highend */
     {"TITAN V",                     CARD_NVIDIA_TITANV},            /* GeForce 1000 - highend */
     {"TITAN X (Pascal)",            CARD_NVIDIA_TITANX_PASCAL},     /* GeForce 1000 - highend */
     {"GTX 1080 Ti",                 CARD_NVIDIA_GEFORCE_GTX1080TI}, /* GeForce 1000 - highend */
@@ -1408,7 +1413,7 @@ cards_nvidia_binary[] =
     {"GT 730",                      CARD_NVIDIA_GEFORCE_GT730},     /* Geforce 700 - lowend */
     {"GTX 690",                     CARD_NVIDIA_GEFORCE_GTX690},    /* Geforce 600 - highend */
     {"GTX 680",                     CARD_NVIDIA_GEFORCE_GTX680},    /* Geforce 600 - highend */
-    {"GTX 675MX",                   CARD_NVIDIA_GEFORCE_GTX675MX},  /* Geforce 600 - highend */
+    {"GTX 675MX",                   CARD_NVIDIA_GEFORCE_GTX675MX_1},/* Geforce 600 - highend */
     {"GTX 670MX",                   CARD_NVIDIA_GEFORCE_GTX670MX},  /* Geforce 600 - highend */
     {"GTX 670",                     CARD_NVIDIA_GEFORCE_GTX670},    /* Geforce 600 - midend high */
     {"GTX 660 Ti",                  CARD_NVIDIA_GEFORCE_GTX660TI},  /* Geforce 600 - midend high */
@@ -1637,7 +1642,7 @@ cards_intel[] =
     /* Haswell */
     {"Iris Pro 5200",               CARD_INTEL_IP5200_1},
     {"Iris 5100",                   CARD_INTEL_I5100_1},
-    {"HD Graphics 5000",            CARD_INTEL_HD5000}, /* MacOS */
+    {"HD Graphics 5000",            CARD_INTEL_HD5000_1}, /* MacOS */
     {"Haswell Mobile",              CARD_INTEL_HWM},
     {"Iris OpenGL Engine",          CARD_INTEL_HWM},    /* MacOS */
     /* Ivybridge */
@@ -1691,6 +1696,8 @@ cards_intel[] =
  * drivers: R700, RV790, R680, RV535, RV516, R410, RS485, RV360, RV351. */
 cards_amd_mesa[] =
 {
+    /* Navi 10 */
+    {"NAVI10",                      CARD_AMD_RADEON_RX_NAVI_10},
     /* Polaris 10/11 */
     {"POLARIS10",                   CARD_AMD_RADEON_RX_480},
     {"POLARIS11",                   CARD_AMD_RADEON_RX_460},
