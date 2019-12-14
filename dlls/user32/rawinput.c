@@ -184,37 +184,18 @@ HANDLE rawinput_handle_from_device_handle(HANDLE device, BOOL rescan)
     return rawinput_handle_from_device_handle(device, FALSE);
 }
 
-static void find_hid_devices(BOOL force)
+static void find_hid_devices_by_guid(const GUID *guid)
 {
-    static ULONGLONG last_check;
-
     SP_DEVICE_INTERFACE_DATA iface = { sizeof(iface) };
     struct hid_device *device;
     HIDD_ATTRIBUTES attr;
     HIDP_CAPS caps;
-    GUID hid_guid;
     HDEVINFO set;
     DWORD idx;
 
-    if (!force && GetTickCount64() - last_check < 2000)
-        return;
-    last_check = GetTickCount64();
+    set = SetupDiGetClassDevsW(guid, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
 
-    HidD_GetHidGuid(&hid_guid);
-
-    set = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
-
-    EnterCriticalSection(&hid_devices_cs);
-
-    /* destroy previous list */
-    for (idx = 0; idx < hid_devices_count; ++idx)
-    {
-        CloseHandle(hid_devices[idx].file);
-        heap_free(hid_devices[idx].path);
-    }
-
-    hid_devices_count = 0;
-    for (idx = 0; SetupDiEnumDeviceInterfaces(set, NULL, &hid_guid, idx, &iface); ++idx)
+    for (idx = 0; SetupDiEnumDeviceInterfaces(set, NULL, guid, idx, &iface); ++idx)
     {
         if (!(device = add_device(set, &iface)))
             continue;
@@ -236,8 +217,47 @@ static void find_hid_devices(BOOL force)
         device->info.usUsage = caps.Usage;
     }
 
-    LeaveCriticalSection(&hid_devices_cs);
     SetupDiDestroyDeviceInfoList(set);
+}
+
+static void find_hid_devices(BOOL force)
+{
+    static ULONGLONG last_check;
+
+    DWORD idx;
+    GUID hid_guid;
+
+    if (!force && GetTickCount64() - last_check < 2000)
+        return;
+
+    HidD_GetHidGuid(&hid_guid);
+
+    EnterCriticalSection(&hid_devices_cs);
+
+    if (!force && GetTickCount64() - last_check < 2000)
+    {
+        LeaveCriticalSection(&hid_devices_cs);
+        return;
+    }
+
+    last_check = GetTickCount64();
+
+    /* destroy previous list */
+    for (idx = 0; idx < hid_devices_count; ++idx)
+    {
+        CloseHandle(hid_devices[idx].file);
+        heap_free(hid_devices[idx].path);
+    }
+
+    hid_devices_count = 0;
+
+    find_hid_devices_by_guid(&hid_guid);
+
+    /* HACK: also look up the xinput-specific devices */
+    hid_guid.Data4[7]++;
+    find_hid_devices_by_guid(&hid_guid);
+
+    LeaveCriticalSection(&hid_devices_cs);
 }
 
 /***********************************************************************
@@ -544,14 +564,65 @@ UINT WINAPI GetRawInputDeviceInfoW(HANDLE device, UINT command, void *data, UINT
     return *data_size;
 }
 
+static int compare_raw_input_devices(const void *ap, const void *bp)
+{
+    const RAWINPUTDEVICE a = *(const RAWINPUTDEVICE *)ap;
+    const RAWINPUTDEVICE b = *(const RAWINPUTDEVICE *)bp;
+
+    if (a.usUsagePage != b.usUsagePage) return a.usUsagePage - b.usUsagePage;
+    if (a.usUsage != b.usUsage) return a.usUsage - b.usUsage;
+    return 0;
+}
+
 /***********************************************************************
  *              GetRegisteredRawInputDevices   (USER32.@)
  */
 UINT WINAPI DECLSPEC_HOTPATCH GetRegisteredRawInputDevices(RAWINPUTDEVICE *devices, UINT *device_count, UINT size)
 {
-    FIXME("devices %p, device_count %p, size %u stub!\n", devices, device_count, size);
+    struct rawinput_device *d = NULL;
+    unsigned int count = ~0U;
 
-    return 0;
+    TRACE("devices %p, device_count %p, size %u\n", devices, device_count, size);
+
+    if (!device_count)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return ~0U;
+    }
+
+    if (devices && !(d = HeapAlloc( GetProcessHeap(), 0, *device_count * sizeof(*d) )))
+        return ~0U;
+
+    SERVER_START_REQ( get_rawinput_devices )
+    {
+        if (d)
+            wine_server_set_reply( req, d, *device_count * sizeof(*d) );
+
+        if (wine_server_call( req ))
+            goto done;
+
+        if (!d || reply->device_count > *device_count)
+        {
+            *device_count = reply->device_count;
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            goto done;
+        }
+
+        for (count = 0; count < reply->device_count; ++count)
+        {
+            devices[count].usUsagePage = d[count].usage_page;
+            devices[count].usUsage = d[count].usage;
+            devices[count].dwFlags = d[count].flags;
+            devices[count].hwndTarget = wine_server_ptr_handle(d[count].target);
+        }
+    }
+    SERVER_END_REQ;
+
+    qsort(devices, count, sizeof(*devices), compare_raw_input_devices);
+
+done:
+    if (d) HeapFree( GetProcessHeap(), 0, d );
+    return count;
 }
 
 

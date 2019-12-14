@@ -355,10 +355,10 @@ typedef union
         unsigned int   length;
     } hid;
 } hw_input_t;
-#define HW_INPUT_KEYBOARD INPUT_KEYBOARD
-#define HW_INPUT_MOUSE    INPUT_MOUSE
-#define HW_INPUT_HARDWARE INPUT_HARDWARE
-#define HW_INPUT_HID      -1
+#define HW_INPUT_MOUSE    0
+#define HW_INPUT_KEYBOARD 1
+#define HW_INPUT_HARDWARE 2
+#define HW_INPUT_HID      3
 
 typedef union
 {
@@ -3194,9 +3194,8 @@ struct send_hardware_message_reply
     char __pad_28[4];
 };
 #define SEND_HWMSG_INJECTED    0x01
-#define SEND_HWMSG_ONLY_RAW    0x02
-#define SEND_HWMSG_SKIP_RAW    0x04
-#define SEND_HWMSG_BCAST_RAW   0x08
+#define SEND_HWMSG_RAWINPUT    0x02
+#define SEND_HWMSG_WINDOW      0x04
 
 
 
@@ -5662,6 +5661,19 @@ struct update_rawinput_devices_reply
 };
 
 
+struct get_rawinput_devices_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+};
+struct get_rawinput_devices_reply
+{
+    struct reply_header __header;
+    unsigned int device_count;
+    /* VARARG(devices,rawinput_devices); */
+    char __pad_12[4];
+};
+
 
 struct get_suspend_context_request
 {
@@ -6276,6 +6288,7 @@ enum request
     REQ_free_user_handle,
     REQ_set_cursor,
     REQ_update_rawinput_devices,
+    REQ_get_rawinput_devices,
     REQ_get_suspend_context,
     REQ_set_suspend_context,
     REQ_create_job,
@@ -6591,6 +6604,7 @@ union generic_request
     struct free_user_handle_request free_user_handle_request;
     struct set_cursor_request set_cursor_request;
     struct update_rawinput_devices_request update_rawinput_devices_request;
+    struct get_rawinput_devices_request get_rawinput_devices_request;
     struct get_suspend_context_request get_suspend_context_request;
     struct set_suspend_context_request set_suspend_context_request;
     struct create_job_request create_job_request;
@@ -6904,6 +6918,7 @@ union generic_reply
     struct free_user_handle_reply free_user_handle_reply;
     struct set_cursor_reply set_cursor_reply;
     struct update_rawinput_devices_reply update_rawinput_devices_reply;
+    struct get_rawinput_devices_reply get_rawinput_devices_reply;
     struct get_suspend_context_reply get_suspend_context_reply;
     struct set_suspend_context_reply set_suspend_context_reply;
     struct create_job_reply create_job_reply;
@@ -6927,6 +6942,6 @@ union generic_reply
     struct get_fsync_apc_idx_reply get_fsync_apc_idx_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 607
+#define SERVER_PROTOCOL_VERSION 609
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

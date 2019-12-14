@@ -371,10 +371,10 @@ typedef union
         unsigned int   length;
     } hid;
 } hw_input_t;
-#define HW_INPUT_KEYBOARD INPUT_KEYBOARD
-#define HW_INPUT_MOUSE    INPUT_MOUSE
-#define HW_INPUT_HARDWARE INPUT_HARDWARE
-#define HW_INPUT_HID      -1
+#define HW_INPUT_MOUSE    0
+#define HW_INPUT_KEYBOARD 1
+#define HW_INPUT_HARDWARE 2
+#define HW_INPUT_HID      3
 
 typedef union
 {
@@ -2325,7 +2325,7 @@ enum message_type
 /* Send a hardware message to a thread queue */
 @REQ(send_hardware_message)
     user_handle_t   win;       /* window handle */
-    hw_input_t      input;
+    hw_input_t      input;     /* input data */
     unsigned int    flags;     /* flags (see below) */
     VARARG(data,bytes);        /* hid report data */
 @REPLY
@@ -2337,9 +2337,8 @@ enum message_type
     VARARG(keystate,bytes);    /* global state array for all the keys */
 @END
 #define SEND_HWMSG_INJECTED    0x01
-#define SEND_HWMSG_ONLY_RAW    0x02
-#define SEND_HWMSG_SKIP_RAW    0x04
-#define SEND_HWMSG_BCAST_RAW   0x08
+#define SEND_HWMSG_RAWINPUT    0x02
+#define SEND_HWMSG_WINDOW      0x04
 
 
 /* Get a message from the current queue */
@@ -3889,6 +3888,12 @@ struct handle_info
     VARARG(devices,rawinput_devices);
 @END
 
+/* Retrieve the list of registered rawinput devices */
+@REQ(get_rawinput_devices)
+@REPLY
+    unsigned int device_count;
+    VARARG(devices,rawinput_devices);
+@END
 
 /* Retrieve the suspended context of a thread */
 @REQ(get_suspend_context)

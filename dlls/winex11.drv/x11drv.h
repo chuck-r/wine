@@ -196,6 +196,8 @@ extern BOOL CDECL X11DRV_UnrealizePalette( HPALETTE hpal ) DECLSPEC_HIDDEN;
 
 extern void X11DRV_Xcursor_Init(void) DECLSPEC_HIDDEN;
 extern void X11DRV_XInput2_Init(void) DECLSPEC_HIDDEN;
+extern void X11DRV_XInput2_Enable(void) DECLSPEC_HIDDEN;
+extern void X11DRV_XInput2_Disable(void) DECLSPEC_HIDDEN;
 
 extern DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
                               const struct gdi_image_bits *src_bits, struct gdi_image_bits *dst_bits,
@@ -240,10 +242,10 @@ extern BOOL IME_SetCompositionString(DWORD dwIndex, LPCVOID lpComp,
                                      DWORD dwReadLen) DECLSPEC_HIDDEN;
 extern void IME_SetResultString(LPWSTR lpResult, DWORD dwResultlen) DECLSPEC_HIDDEN;
 
-extern void X11DRV_XDND_EnterEvent( HWND hWnd, XClientMessageEvent *event ) DECLSPEC_HIDDEN;
-extern void X11DRV_XDND_PositionEvent( HWND hWnd, XClientMessageEvent *event ) DECLSPEC_HIDDEN;
-extern void X11DRV_XDND_DropEvent( HWND hWnd, XClientMessageEvent *event ) DECLSPEC_HIDDEN;
-extern void X11DRV_XDND_LeaveEvent( HWND hWnd, XClientMessageEvent *event ) DECLSPEC_HIDDEN;
+extern void X11DRV_XDND_EnterEvent( HWND hWnd, XEvent *xev ) DECLSPEC_HIDDEN;
+extern void X11DRV_XDND_PositionEvent( HWND hWnd, XEvent *xev ) DECLSPEC_HIDDEN;
+extern void X11DRV_XDND_DropEvent( HWND hWnd, XEvent *xev ) DECLSPEC_HIDDEN;
+extern void X11DRV_XDND_LeaveEvent( HWND hWnd, XEvent *xev ) DECLSPEC_HIDDEN;
 extern void X11DRV_CLIPBOARD_ImportSelection( Display *display, Window win, Atom selection,
                                               Atom *targets, UINT count,
                                               void (*callback)( Atom, UINT, HANDLE )) DECLSPEC_HIDDEN;
@@ -340,12 +342,10 @@ struct x11drv_thread_data
     DWORD    clip_reset;           /* time when clipping was last reset */
     HKL      kbd_layout;           /* active keyboard layout */
     enum { xi_unavailable = -1, xi_unknown, xi_disabled, xi_enabled } xi2_state; /* XInput2 state */
-    void    *xi2_devices;          /* list of XInput2 devices (valid when state is enabled) */
-    int      xi2_device_count;
     struct x11drv_valuator_data x_rel_valuator;
     struct x11drv_valuator_data y_rel_valuator;
     int      xi2_core_pointer;     /* XInput2 core pointer id */
-    int      xi2_current_slave;    /* Current slave driving the Core pointer */
+    int      xi2_rawinput_only;
 };
 
 extern struct x11drv_thread_data *x11drv_init_thread_data(void) DECLSPEC_HIDDEN;
@@ -386,7 +386,6 @@ extern Colormap default_colormap DECLSPEC_HIDDEN;
 extern XPixmapFormatValues **pixmap_formats DECLSPEC_HIDDEN;
 extern Window root_window DECLSPEC_HIDDEN;
 extern BOOL clipping_cursor DECLSPEC_HIDDEN;
-extern BOOL keyboard_grabbed DECLSPEC_HIDDEN;
 extern unsigned int screen_bpp DECLSPEC_HIDDEN;
 extern BOOL use_xkb DECLSPEC_HIDDEN;
 extern BOOL usexrandr DECLSPEC_HIDDEN;
@@ -541,7 +540,8 @@ enum x11drv_window_messages
     WM_X11DRV_SET_WIN_REGION,
     WM_X11DRV_RESIZE_DESKTOP,
     WM_X11DRV_SET_CURSOR,
-    WM_X11DRV_CLIP_CURSOR
+    WM_X11DRV_CLIP_CURSOR,
+    WM_X11DRV_RELEASE_CURSOR
 };
 
 /* _NET_WM_STATE properties that we keep track of */
@@ -616,6 +616,7 @@ extern BOOL update_clipboard( HWND hwnd ) DECLSPEC_HIDDEN;
 
 extern void set_wm_hints( struct x11drv_win_data *data ) DECLSPEC_HIDDEN;
 extern BOOL fs_hack_enabled(void) DECLSPEC_HIDDEN;
+extern BOOL fs_hack_is_integer(void) DECLSPEC_HIDDEN;
 extern BOOL fs_hack_matches_current_mode(int w, int h) DECLSPEC_HIDDEN;
 extern BOOL fs_hack_matches_real_mode(int w, int h) DECLSPEC_HIDDEN;
 extern POINT fs_hack_current_mode(void) DECLSPEC_HIDDEN;
@@ -657,7 +658,6 @@ extern void sync_window_cursor( Window window ) DECLSPEC_HIDDEN;
 extern LRESULT clip_cursor_notify( HWND hwnd, HWND prev_clip_hwnd, HWND new_clip_hwnd ) DECLSPEC_HIDDEN;
 extern void ungrab_clipping_window(void) DECLSPEC_HIDDEN;
 extern void reset_clipping_window(void) DECLSPEC_HIDDEN;
-extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
 extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset ) DECLSPEC_HIDDEN;
 extern void move_resize_window( HWND hwnd, int dir ) DECLSPEC_HIDDEN;
 extern void X11DRV_InitKeyboard( Display *display ) DECLSPEC_HIDDEN;

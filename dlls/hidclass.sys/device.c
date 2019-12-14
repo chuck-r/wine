@@ -249,7 +249,7 @@ static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *pack
     SERVER_START_REQ(send_hardware_message)
     {
         req->win                  = 0;
-        req->flags                = SEND_HWMSG_BCAST_RAW;
+        req->flags                = SEND_HWMSG_RAWINPUT;
         req->input.type           = HW_INPUT_HID;
         req->input.hid.device     = wine_server_obj_handle(ext->link_handle);
         req->input.hid.usage_page = ext->preparseData->caps.UsagePage;
