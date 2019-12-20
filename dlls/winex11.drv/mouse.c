@@ -25,6 +25,9 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <stdarg.h>
+#ifdef HAVE_X11_EXTENSIONS_XINPUT_H
+#include <X11/extensions/XInput.h>
+#endif
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
 #include <X11/extensions/XInput2.h>
 #endif
@@ -120,6 +123,8 @@ static const UINT button_up_data[NB_BUTTONS] =
     XBUTTON2
 };
 
+static unsigned char *x_pointer_map;
+
 XContext cursor_context = 0;
 
 static HWND cursor_window;
@@ -137,8 +142,31 @@ MAKE_FUNCPTR(XIFreeDeviceInfo);
 MAKE_FUNCPTR(XIQueryDevice);
 MAKE_FUNCPTR(XIQueryVersion);
 MAKE_FUNCPTR(XISelectEvents);
+MAKE_FUNCPTR(XOpenDevice);
+MAKE_FUNCPTR(XCloseDevice);
+MAKE_FUNCPTR(XGetDeviceButtonMapping);
 #undef MAKE_FUNCPTR
 #endif
+
+void X11DRV_InitMouse( Display *display )
+{
+    int i, n_buttons;
+    unsigned char *new_map, *old_map;
+
+    n_buttons = XGetPointerMapping(display, NULL, 0);
+
+    new_map = HeapAlloc(GetProcessHeap(), 0, sizeof(*new_map) * n_buttons);
+
+    /* default mapping */
+    for (i = 0; i < n_buttons; ++i)
+        new_map[i] = i + 1;
+
+    XGetPointerMapping(display, new_map, n_buttons);
+
+    old_map = InterlockedExchangePointer((void**)&x_pointer_map, new_map);
+
+    HeapFree(GetProcessHeap(), 0, old_map);
+}
 
 /***********************************************************************
  *		X11DRV_Xcursor_Init
@@ -1886,6 +1914,64 @@ static BOOL X11DRV_RawMotion( XGenericEventCookie *xev )
     return TRUE;
 }
 
+struct device_map {
+    int id, btn_count;
+    unsigned char map[256];
+
+    struct list entry;
+};
+
+static const unsigned char *get_device_map(Display *display, int device_id)
+{
+    static struct list cache = LIST_INIT(cache);
+
+    struct device_map *device_map;
+    XDevice *device;
+
+    /* TODO: We should ask for DeviceMappingNotify events and update the cache. */
+
+    LIST_FOR_EACH_ENTRY(device_map, &cache, struct device_map, entry)
+    {
+        if (device_map->id == device_id)
+            return device_map->map;
+    }
+
+    device = pXOpenDevice(display, device_id);
+    if (!device)
+    {
+        WARN("unable to open cursor source device? %u\n", device_id);
+        return NULL;
+    }
+
+    device_map = HeapAlloc(GetProcessHeap(), 0, sizeof(*device_map));
+    device_map->id = device_id;
+
+    device_map->btn_count = pXGetDeviceButtonMapping(display, device,
+            device_map->map, ARRAY_SIZE(device_map->map));
+
+    pXCloseDevice(display, device);
+
+    list_add_tail(&cache, &device_map->entry);
+
+    return device_map->map;
+}
+
+/* apply button maps to raw button event */
+static unsigned char translate_raw_button(XIRawEvent *event)
+{
+    const unsigned char *device_map = get_device_map(event->display, event->sourceid);
+    const unsigned char *pointer_map = x_pointer_map;
+    int from = event->detail;
+
+    if (device_map)
+        from = device_map[from - 1];
+
+    if (pointer_map)
+        from = pointer_map[from - 1];
+
+    return from;
+}
+
 /***********************************************************************
  *           X11DRV_RawButtonEvent
  */
@@ -1893,14 +1979,14 @@ static BOOL X11DRV_RawButtonEvent( XGenericEventCookie *cookie )
 {
     struct x11drv_thread_data *thread_data = x11drv_thread_data();
     XIRawEvent *event = cookie->data;
-    int button = event->detail - 1;
+    int button = translate_raw_button(event) - 1;
     INPUT input;
 
     if (button >= NB_BUTTONS) return FALSE;
     if (thread_data->xi2_state != xi_enabled) return FALSE;
     if (event->deviceid != thread_data->xi2_core_pointer) return FALSE;
 
-    TRACE( "raw button %u %s\n", button, event->evtype == XI_RawButtonRelease ? "up" : "down" );
+    TRACE( "raw button %u (was: %u) %s\n", button, event->detail, event->evtype == XI_RawButtonRelease ? "up" : "down" );
 
     input.type             = INPUT_MOUSE;
     input.u.mi.dx          = 0;
@@ -1943,6 +2029,9 @@ void X11DRV_XInput2_Init(void)
     LOAD_FUNCPTR(XIQueryDevice);
     LOAD_FUNCPTR(XIQueryVersion);
     LOAD_FUNCPTR(XISelectEvents);
+    LOAD_FUNCPTR(XOpenDevice);
+    LOAD_FUNCPTR(XCloseDevice);
+    LOAD_FUNCPTR(XGetDeviceButtonMapping);
 #undef LOAD_FUNCPTR
 
     xinput2_available = XQueryExtension( gdi_display, "XInputExtension", &xinput2_opcode, &event, &error );
